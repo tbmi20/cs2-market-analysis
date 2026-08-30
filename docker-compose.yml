@@ -38,6 +38,21 @@ services:
     volumes:
       - redpanda_data:/var/lib/redpanda/data
 
+  # Node isn't installed on the host — this substitutes a container for local
+  # Node tooling (plan Section 7/9 step 7). Dev-only: runs `next dev` straight
+  # from the mounted source, no production build/Dockerfile here.
+  dashboard:
+    image: node:22-alpine
+    container_name: cs2-dashboard
+    working_dir: /app
+    volumes:
+      - ./dashboard:/app
+    ports:
+      - "3000:3000"
+    command: sh -c "npm run dev"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Docker Desktop provides this natively; harmless to also set explicitly
+
 volumes:
   postgres_data:
   redpanda_data:

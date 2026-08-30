@@ -113,12 +113,18 @@ class AnalysisResult(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     skin_variant_id: Mapped[int] = mapped_column(ForeignKey("skin_variants.id"))
-    metric_type: Mapped[str]  # 'trend' | 'arbitrage' | 'volatility'
-    window_days: Mapped[int | None]  # e.g. 7, 30
+    metric_type: Mapped[str]  # 'trend' | 'arbitrage' | 'volatility' | 'underpriced_listing'
+    window_days: Mapped[int | None]  # e.g. 7, 30 — null for "right now" metrics (arbitrage, underpriced_listing)
     value: Mapped[float | None]
     sample_count: Mapped[int]
     confidence_tier: Mapped[str]  # 'low' | 'medium' | 'high'
     computed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # Metric-specific structured detail that doesn't fit a fixed column — e.g.
+    # which two marketplaces an 'arbitrage' row compares and their prices, or
+    # which specific listing an 'underpriced_listing' row flags. Kept as JSONB
+    # rather than adding narrow columns per metric_type (plan Section 5 didn't
+    # anticipate multi-marketplace or per-listing results).
+    details: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class IngestionRun(Base):
