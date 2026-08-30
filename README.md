@@ -10,8 +10,9 @@ See [plan/cs2-market-analysis-plan.md](plan/cs2-market-analysis-plan.md) for the
 cp .env.example .env      # fill in CSFLOAT_API_KEY when you have one
 docker compose up -d      # Postgres (port 5433) + Redpanda (Kafka-API compatible, port 9092)
 uv run alembic upgrade head
-uv run pytest             # unit tests (no live services needed)
+uv run pytest             # unit + integration tests (needs postgres up; each test rolls back)
 uv run python -m ingestion.csfloat   # polls CSFloat, publishes to raw.csfloat.listings
+uv run python -m consolidator        # consumes raw.*.listings, writes to postgres
 ```
 
 `DB_PORT` defaults to `5433`, not the standard `5432`, to avoid colliding with any
