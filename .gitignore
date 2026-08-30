@@ -1,0 +1,13 @@
+plan
+.env
+
+# Python
+.venv
+__pycache__/
+*.pyc
+
+# Node / Next.js
+node_modules/
+.next/
+
+# Docker volumes are named/managed by Docker, nothing local to ignore here
