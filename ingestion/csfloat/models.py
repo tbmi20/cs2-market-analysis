@@ -18,8 +18,15 @@ class CSFloatItem(BaseModel):
     float_value: float | None = None
     market_hash_name: str
     item_name: str  # e.g. "M4A4 | Poseidon" — weapon and skin, no wear suffix
-    wear_name: str | None = None  # e.g. "Factory New"; absent for wear-less items (gloves/knives w/o float, agents, etc.)
+    wear_name: str | None = None  # e.g. "Factory New"; null for anything that isn't a worn skin
     rarity: int | None = None
+    # /listings returns every item type CSFloat sells, not just weapon skins —
+    # confirmed live 2026-08-30: also 'agent', 'sticker', and presumably
+    # 'case'/'key'/'graffiti'/etc. `type == "skin"` is the reliable filter;
+    # `wear_name is None` alone isn't (a vanilla/no-paint knife is also
+    # type="skin" with no wear_name, and should still be skipped, just for a
+    # different reason — see plugin.py).
+    type: str | None = None
 
 
 class CSFloatListing(BaseModel):

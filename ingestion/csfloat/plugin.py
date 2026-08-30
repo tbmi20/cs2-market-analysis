@@ -26,10 +26,15 @@ class CSFloatPlugin(MarketplacePlugin):
         raw_listings = self._client.fetch_recent_listings()
         listings: list[NormalizedListing] = []
         for raw in raw_listings:
+            # /listings also returns agents, stickers, cases, etc. (confirmed live
+            # 2026-08-30) — routinely skipped, not worth a log line each time.
+            if raw.item.type != "skin":
+                continue
             try:
                 listings.append(self._normalize(raw))
             except ValueError as exc:
-                # Don't let one malformed/unexpected item drop the whole batch.
+                # A *skin* item that didn't parse is worth knowing about — it
+                # likely means a format assumption below needs revisiting.
                 logger.warning("skipping csfloat listing %s: %s", raw.id, exc)
         return listings
 
@@ -39,7 +44,8 @@ class CSFloatPlugin(MarketplacePlugin):
 
         wear_category = WEAR_NAME_TO_CATEGORY.get(raw.item.wear_name or "")
         if wear_category is None:
-            raise ValueError(f"unrecognized wear_name {raw.item.wear_name!r}")
+            # A "skin" item can still lack a wear_name — a vanilla/no-paint knife, e.g.
+            raise ValueError(f"no recognizable wear_name ({raw.item.wear_name!r}) — likely a vanilla/unpainted item")
 
         weapon, _, skin_name = raw.item.item_name.partition(" | ")
         if not skin_name:

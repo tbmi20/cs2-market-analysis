@@ -1,19 +1,18 @@
 """Thin HTTP client for CSFloat's GET /v1/listings endpoint.
 
-Known limitation (intentional, not an oversight): CSFloat's public docs
-(https://docs.csfloat.com/) confirm the endpoint is cursor-paginated but don't
-show where the next cursor comes from in the response (the payload is a bare
-JSON array, no envelope object) or the exact rate-limit header names. Rather
-than guess at those and risk silently doing the wrong thing, this client
-fetches a single page per call, sorted by `most_recent`, so each poll picks up
-whatever's newest — full catalog backfill via pagination is a follow-up once
-those mechanics are confirmed against a live API key (see plan Section 10 /
-project TODOs).
+Confirmed against a live authenticated call on 2026-08-30 (CSFloat's public
+docs at https://docs.csfloat.com/ don't show this — the docs describe a bare
+array, but the real response is an envelope):
+- Response body: `{"data": [<listing>, ...], "cursor": "<opaque string>"}`
+- Rate-limit headers: `x-ratelimit-limit`, `x-ratelimit-remaining`,
+  `x-ratelimit-reset` (the last is a Unix epoch seconds timestamp, not a
+  relative "seconds remaining" value)
 """
 
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -24,10 +23,8 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://csfloat.com/api/v1/listings"
 PAGE_LIMIT = 50  # API max, per docs.csfloat.com
 
-# Header names aren't documented; checked defensively so a miss is just a
-# no-op rather than a crash. Confirm the real names from a live response
-# before relying on this for anything more than a safety net.
-_REMAINING_HEADER_CANDIDATES = ("x-ratelimit-remaining", "x-rate-limit-remaining")
+_REMAINING_HEADER = "x-ratelimit-remaining"
+_RESET_HEADER = "x-ratelimit-reset"
 
 
 class CSFloatClient:
@@ -37,14 +34,44 @@ class CSFloatClient:
     def close(self) -> None:
         self._client.close()
 
-    def fetch_recent_listings(self) -> list[CSFloatListing]:
-        response = self._client.get(BASE_URL, params={"limit": PAGE_LIMIT, "sort_by": "most_recent"})
-        self._log_rate_limit(response.headers)
-        response.raise_for_status()
-        return [CSFloatListing.model_validate(raw) for raw in response.json()]
+    def fetch_recent_listings(self, *, max_pages: int = 5) -> list[CSFloatListing]:
+        """Follows cursor pagination, sorted by `most_recent`, up to
+        `max_pages` pages per call (so each poll cycle catches up on new
+        listings without an unbounded number of requests if a lot landed
+        since the last poll).
+        """
+        listings: list[CSFloatListing] = []
+        cursor: str | None = None
 
-    def _log_rate_limit(self, headers: httpx.Headers) -> None:
-        for name in _REMAINING_HEADER_CANDIDATES:
-            if name in headers:
-                logger.debug("csfloat rate limit remaining (%s): %s", name, headers[name])
-                return
+        for _ in range(max_pages):
+            params: dict[str, str | int] = {"limit": PAGE_LIMIT, "sort_by": "most_recent"}
+            if cursor:
+                params["cursor"] = cursor
+
+            response = self._client.get(BASE_URL, params=params)
+            self._respect_rate_limit(response.headers)
+            response.raise_for_status()
+
+            body = response.json()
+            page = body.get("data", [])
+            if not page:
+                break
+
+            listings.extend(CSFloatListing.model_validate(raw) for raw in page)
+
+            cursor = body.get("cursor")
+            if not cursor or len(page) < PAGE_LIMIT:
+                break  # short page or no cursor => this was the last page
+
+        return listings
+
+    def _respect_rate_limit(self, headers: httpx.Headers) -> None:
+        remaining = headers.get(_REMAINING_HEADER)
+        reset_at = headers.get(_RESET_HEADER)
+        if remaining is None or reset_at is None:
+            return
+
+        if int(remaining) <= 0:
+            wait_for = max(0.0, float(reset_at) - time.time())
+            logger.warning("csfloat rate limit exhausted, sleeping %.1fs until reset", wait_for)
+            time.sleep(wait_for)

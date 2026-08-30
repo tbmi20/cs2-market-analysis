@@ -28,6 +28,7 @@ DOCS_EXAMPLE_LISTING = {
         "item_name": "M4A4 | Poseidon",
         "wear_name": "Factory New",
         "rarity": 5,
+        "type": "skin",
     },
 }
 
@@ -60,7 +61,7 @@ def test_normalize_rejects_unrecognized_wear_name(plugin: CSFloatPlugin) -> None
         {**DOCS_EXAMPLE_LISTING, "item": {**DOCS_EXAMPLE_LISTING["item"], "wear_name": None}}
     )
 
-    with pytest.raises(ValueError, match="unrecognized wear_name"):
+    with pytest.raises(ValueError, match="no recognizable wear_name"):
         plugin._normalize(raw)
 
 
@@ -69,3 +70,25 @@ def test_normalize_rejects_non_listed_state(plugin: CSFloatPlugin) -> None:
 
     with pytest.raises(ValueError, match="unexpected state"):
         plugin._normalize(raw)
+
+
+def test_fetch_listings_filters_out_non_skin_items(plugin: CSFloatPlugin) -> None:
+    # Confirmed live 2026-08-30: /listings also returns agents, stickers, etc.,
+    # whose item_name would otherwise misparse (e.g. "Special Agent Ava | FBI").
+    agent = {
+        **DOCS_EXAMPLE_LISTING,
+        "id": "agent-1",
+        "item": {**DOCS_EXAMPLE_LISTING["item"], "type": "agent", "wear_name": None, "item_name": "Special Agent Ava | FBI"},
+    }
+    skin = DOCS_EXAMPLE_LISTING
+
+    class _StubClient:
+        def fetch_recent_listings(self):
+            return [CSFloatListing.model_validate(agent), CSFloatListing.model_validate(skin)]
+
+    plugin._client = _StubClient()
+
+    listings = plugin.fetch_listings()
+
+    assert len(listings) == 1
+    assert listings[0].listing_id == "324288155723370196"
