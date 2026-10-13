@@ -6,7 +6,7 @@ build order.
 Skin names below use a distinctive "(consolidator-test)" marker, and
 assertions scope by skin_variant_id/listing_id rather than a blanket
 marketplace filter, since the real dev database has genuine csfloat data
-(and possibly live skinport-stub data) coexisting in the same tables.
+(and possibly live skinport data) coexisting in the same tables.
 """
 
 from __future__ import annotations

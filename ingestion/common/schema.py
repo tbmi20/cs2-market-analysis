@@ -43,6 +43,9 @@ class NormalizedListing(BaseModel):
     rarity: str | None = None
     listing_price: float | None = None  # ask, in the marketplace's base currency unit (not cents)
     buy_order_price: float | None = None  # bid, if the marketplace exposes one
+    # Units on sale at listing_price: 1 for a real individual listing, more when a
+    # marketplace only exposes per-item aggregates (Skinport's lowest ask + stock).
+    quantity: int = 1
     event_type: EventType = "listed"
     observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     raw_payload: dict  # untouched source response, stored as-is downstream

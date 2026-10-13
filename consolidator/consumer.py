@@ -52,6 +52,7 @@ def upsert_listing(session: Session, listing: NormalizedListing) -> None:
         rarity=listing.rarity,
         listing_price=listing.listing_price,
         buy_order_price=listing.buy_order_price,
+        quantity=listing.quantity,
         raw_payload=listing.raw_payload,
         last_updated=listing.observed_at,
     )
@@ -63,6 +64,7 @@ def upsert_listing(session: Session, listing: NormalizedListing) -> None:
             "rarity": stmt.excluded.rarity,
             "listing_price": stmt.excluded.listing_price,
             "buy_order_price": stmt.excluded.buy_order_price,
+            "quantity": stmt.excluded.quantity,
             "raw_payload": stmt.excluded.raw_payload,
             "last_updated": stmt.excluded.last_updated,
         },

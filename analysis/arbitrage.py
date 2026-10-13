@@ -4,9 +4,12 @@ active listing for the same skin_variant (plan Section 1: arbitrage is
 table — not price_history/price_window_stats, which trend/volatility use).
 
 Needs >= 2 marketplaces with data for a skin_variant to produce anything
-(plan Section 10). ingestion/skinport/plugin.py is a stub that fakes a
-second marketplace so this can be built and tested before a real Skinport
-integration exists (plan Section 9 step 5).
+(plan Section 10) — in practice csfloat vs. skinport. Skinport rows carry
+no float, so prices are compared per (weapon, skin, wear category) rather
+than per float-bucketed skin_variant: the premium sub-buckets cover all of
+Factory New, so a CSFloat FN listing would otherwise never meet a Skinport
+one. Results are recorded against the wear category's default-bucket
+variant.
 """
 
 from __future__ import annotations
@@ -20,7 +23,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from analysis.trend import confidence_tier
-from db.models import AnalysisResult, Listing, MarketplaceFee
+from consolidator.skin_variants import get_or_create_skin_variant
+from db.models import AnalysisResult, Listing, MarketplaceFee, SkinVariant
 from db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -39,22 +43,30 @@ def run(session: Session | None = None, min_sample_count: int | None = None) -> 
 
         rows = session.execute(
             select(
-                Listing.skin_variant_id,
+                SkinVariant.weapon,
+                SkinVariant.skin_name,
+                SkinVariant.wear_category,
                 Listing.marketplace,
                 func.min(Listing.listing_price).label("min_price"),
-                func.count().label("active_count"),
+                # Sum, not count: one Skinport row stands for `quantity` units on sale.
+                func.sum(Listing.quantity).label("active_count"),
             )
+            .join(SkinVariant, Listing.skin_variant_id == SkinVariant.id)
             .where(Listing.listing_price.is_not(None))
-            .group_by(Listing.skin_variant_id, Listing.marketplace)
+            .group_by(SkinVariant.weapon, SkinVariant.skin_name, SkinVariant.wear_category, Listing.marketplace)
         ).all()
 
-        by_variant: dict[int, dict[str, tuple[float, int]]] = defaultdict(dict)
+        by_skin: dict[tuple[str, str, str], dict[str, tuple[float, int]]] = defaultdict(dict)
         for row in rows:
-            by_variant[row.skin_variant_id][row.marketplace] = (row.min_price, row.active_count)
+            by_skin[(row.weapon, row.skin_name, row.wear_category)][row.marketplace] = (row.min_price, row.active_count)
 
-        for skin_variant_id, marketplaces in by_variant.items():
+        for (weapon, skin_name, wear_category), marketplaces in by_skin.items():
             if len(marketplaces) < 2:
                 continue  # arbitrage needs >= 2 sources
+
+            skin_variant_id = get_or_create_skin_variant(
+                session, weapon=weapon, skin_name=skin_name, wear_category=wear_category, float_value=None
+            )
 
             for (mp_a, stats_a), (mp_b, stats_b) in combinations(marketplaces.items(), 2):
                 written += _record_pair(session, skin_variant_id, mp_a, stats_a, mp_b, stats_b, fees, min_sample_count)

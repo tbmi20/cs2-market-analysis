@@ -1,19 +1,19 @@
 # cs2-market-analysis
 
-A dashboard to visualise CSFloat transactions
+A dashboard to visualise CSFloat and Skinport market data
 
 See [plan/cs2-market-analysis-plan.md](plan/cs2-market-analysis-plan.md) for the full design.
 
 ## Local dev setup
 
 Everything runs in Docker, so the only requirements are Docker Desktop (Compose v2.24+)
-and a CSFloat API key. `uv` is only needed to run scripts or tests outside Docker.
+a CSFloat API key and a Skinport API client id/secret. `uv` is only needed to run scripts or tests outside Docker.
 
 ### macOS
 
 ```bash
 git clone <repo-url> && cd cs2-market-analysis
-cp .env.example .env      # fill in CSFLOAT_API_KEY
+cp .env.example .env      # fill in CSFLOAT_API_KEY, SKINPORT_ID, SKINPORT_SECRET
 docker compose up -d --build
 ```
 
@@ -26,7 +26,7 @@ don't reach the containers, so the dashboard won't hot-reload, and file access i
 ```bash
 # in a WSL (Ubuntu) terminal
 git clone <repo-url> && cd cs2-market-analysis
-cp .env.example .env      # fill in CSFLOAT_API_KEY
+cp .env.example .env      # fill in CSFLOAT_API_KEY, SKINPORT_ID, SKINPORT_SECRET
 docker compose up -d --build
 ```
 
@@ -39,7 +39,7 @@ are the same; only the copy step differs: `Copy-Item .env.example .env`.
 ### What's running
 
 That runs everything: Postgres (host port 5433), Redpanda (Kafka-API compatible, 9092),
-migrations (one-shot), the CSFloat ingester, the consolidator, the analysis scheduler,
+migrations (one-shot), the CSFloat and Skinport ingesters, the consolidator, the analysis scheduler,
 the API (<http://localhost:8000>) and the dashboard (<http://localhost:3000>).
 
 ```bash
@@ -55,7 +55,7 @@ stop its container first, then e.g.:
 
 ```bash
 uv run pytest                        # unit + integration tests (needs postgres up; each test rolls back)
-uv run python -m ingestion.skinport  # STUB — fake listings, for exercising arbitrage logic only
+uv run python -m ingestion.skinport  # polls Skinport every SKINPORT_POLL_INTERVAL_SECONDS
 uv run python -m analysis            # one-shot: trend, volatility, arbitrage, underpriced_listing
 uv run uvicorn api.main:app --reload
 ```
@@ -81,7 +81,7 @@ docker compose exec dashboard npm install <package>
 
 - `db/` — SQLAlchemy models (source of truth for the schema) + session factory, shared by everything below
 - `migrations/` — Alembic migrations, generated from `db/models.py`
-- `ingestion/` — per-marketplace polling plugins (`ingestion/common` holds the shared plugin interface). `ingestion/skinport` is a STUB (fake hardcoded listings, no real API) — not a real Skinport integration
+- `ingestion/` — per-marketplace polling plugins (`ingestion/common` holds the shared plugin interface). `ingestion/skinport` publishes Skinport's per-item lowest ask + stock count (its API has no individual listings or floats), skipping StatTrak™/Souvenir
 - `consolidator/` — single Kafka consumer: dedups, upserts `listings`/`skin_variants`, appends `price_history`
 - `analysis/` — scheduled batch modules (`trend.py`, `arbitrage.py`, `underpriced.py`) — read Postgres only, no Kafka dependency
 - `api/` — FastAPI service serving `analysis_results` and listing browse/filter queries

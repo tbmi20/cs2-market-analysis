@@ -1,9 +1,9 @@
 """Exercises the arbitrage module against manually-inserted rows — no real
-Skinport integration involved (see ingestion/skinport/plugin.py's stub).
+marketplace calls involved.
 
 Assertions are scoped to each test's own skin_variant_id rather than the
 global `written` count, since the real dev database has actual csfloat data
-(and possibly live skinport-stub data) coexisting in the same tables.
+(and possibly live skinport data) coexisting in the same tables.
 """
 
 from __future__ import annotations
@@ -27,13 +27,14 @@ def make_variant(db_session, **overrides) -> int:
     return variant.id
 
 
-def add_listing(db_session, *, marketplace: str, listing_id: str, variant_id: int, price: float) -> None:
+def add_listing(db_session, *, marketplace: str, listing_id: str, variant_id: int, price: float, quantity: int = 1) -> None:
     db_session.add(
         Listing(
             marketplace=marketplace,
             listing_id=listing_id,
             skin_variant_id=variant_id,
             listing_price=price,
+            quantity=quantity,
         )
     )
     db_session.flush()
@@ -52,9 +53,19 @@ def set_fee(db_session, marketplace: str, seller_fee_pct: float) -> None:
 
 
 def results_for(db_session, variant_id: int) -> list[AnalysisResult]:
+    # Arbitrage records against the wear category's default-bucket variant,
+    # not the float-bucketed one the listings were added under.
+    variant = db_session.get(SkinVariant, variant_id)
+    default_variant_id = db_session.execute(
+        select(SkinVariant.id).where(
+            SkinVariant.weapon == variant.weapon,
+            SkinVariant.skin_name == variant.skin_name,
+            SkinVariant.float_bucket == variant.wear_category,
+        )
+    ).scalar_one_or_none()
     return list(
         db_session.execute(
-            select(AnalysisResult).where(AnalysisResult.skin_variant_id == variant_id, AnalysisResult.metric_type == "arbitrage")
+            select(AnalysisResult).where(AnalysisResult.skin_variant_id == default_variant_id, AnalysisResult.metric_type == "arbitrage")
         ).scalars()
     )
 
@@ -103,8 +114,7 @@ def test_no_arbitrage_row_with_only_one_marketplace(db_session) -> None:
 
 def test_skips_when_marketplace_fee_missing(db_session) -> None:
     # Fake marketplace names with no seeded marketplace_fees row at all
-    # (unlike csfloat/skinport, which always have a placeholder row — see
-    # migrations/versions/cb9754b5988a and the skinport stub's seed insert).
+    # (unlike csfloat/skinport, which are seeded by a migration).
     variant_id = make_variant(db_session, skin_name="Slate (no-fee-row)")
     add_listing(db_session, marketplace="fakemarket_a", listing_id="fa-1", variant_id=variant_id, price=54.45)
     add_listing(db_session, marketplace="fakemarket_b", listing_id="fb-1", variant_id=variant_id, price=40.00)
@@ -112,3 +122,37 @@ def test_skips_when_marketplace_fee_missing(db_session) -> None:
     run(session=db_session, min_sample_count=10)
 
     assert results_for(db_session, variant_id) == []
+
+
+def test_compares_across_float_buckets_within_a_wear_category(db_session) -> None:
+    # A CSFloat FN listing always lands in a premium sub-bucket, while a
+    # floatless Skinport one lands in the plain "FN" bucket — they must still meet.
+    csfloat_variant = make_variant(db_session, skin_name="Slate (bucket-test)", float_bucket="Full FN")
+    skinport_variant = make_variant(db_session, skin_name="Slate (bucket-test)", float_bucket="FN")
+    set_fee(db_session, "csfloat", 0.0)
+    set_fee(db_session, "skinport", 0.0)
+    add_listing(db_session, marketplace="csfloat", listing_id="cf-4", variant_id=csfloat_variant, price=50.00)
+    add_listing(db_session, marketplace="skinport", listing_id="sp-4", variant_id=skinport_variant, price=40.00)
+
+    run(session=db_session, min_sample_count=10)
+
+    results = results_for(db_session, skinport_variant)
+    assert len(results) == 1
+    assert results[0].skin_variant_id == skinport_variant
+    assert results[0].value == pytest.approx(10.00)
+
+
+def test_sample_count_uses_skinport_quantity(db_session) -> None:
+    variant_id = make_variant(db_session, skin_name="Slate (quantity-test)")
+    set_fee(db_session, "csfloat", 0.0)
+    set_fee(db_session, "skinport", 0.0)
+    for i in range(12):
+        add_listing(db_session, marketplace="csfloat", listing_id=f"cf-q{i}", variant_id=variant_id, price=50.00 + i)
+    add_listing(db_session, marketplace="skinport", listing_id="sp-q", variant_id=variant_id, price=40.00, quantity=15)
+
+    run(session=db_session, min_sample_count=10)
+
+    [result] = results_for(db_session, variant_id)
+    assert result.sample_count == 12
+    assert result.details["cheap_active_listings"] == 15
+    assert result.confidence_tier != "low"
