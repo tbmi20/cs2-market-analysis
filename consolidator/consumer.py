@@ -98,6 +98,7 @@ def process_batch(session: Session, marketplace: str, listings: list[NormalizedL
             upsert_listing(session, listing)
         log_ingestion_run(session, marketplace, started_at, status="success", records_ingested=len(listings))
         session.commit()
+        logger.info("consolidated %d %s listings", len(listings), marketplace)
     except Exception as exc:
         session.rollback()
         logger.exception("failed to process batch for %s", marketplace)
@@ -133,6 +134,7 @@ def run_forever(bootstrap_servers: str | None = None, poll_timeout: float = 1.0)
         }
     )
     consumer.subscribe([TOPIC_PATTERN])
+    logger.info("subscribed to %s, waiting for messages", TOPIC_PATTERN)
 
     try:
         while True:

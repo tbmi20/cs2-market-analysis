@@ -40,8 +40,10 @@ export function AnalysisResultsTable({
           </thead>
           <tbody>
             {results.map((r) => (
+              // Row id, not skin/metric/window: one skin can have several
+              // underpriced_listing rows in the same run (one per listing).
               <tr
-                key={`${r.skin_variant_id}-${r.metric_type}-${r.window_days ?? "now"}`}
+                key={r.id}
                 className="border-t border-zinc-100 dark:border-zinc-800"
               >
                 <td className="py-1.5 pr-4">

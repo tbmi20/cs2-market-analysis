@@ -6,42 +6,75 @@ See [plan/cs2-market-analysis-plan.md](plan/cs2-market-analysis-plan.md) for the
 
 ## Local dev setup
 
+Everything runs in Docker, so the only requirements are Docker Desktop (Compose v2.24+)
+and a CSFloat API key. `uv` is only needed to run scripts or tests outside Docker.
+
+### macOS
+
 ```bash
-cp .env.example .env      # fill in CSFLOAT_API_KEY when you have one
-docker compose up -d      # Postgres (port 5433) + Redpanda (Kafka-API compatible, port 9092)
-uv run alembic upgrade head
-uv run pytest             # unit + integration tests (needs postgres up; each test rolls back)
-uv run python -m ingestion.csfloat   # polls CSFloat, publishes to raw.csfloat.listings
-uv run python -m ingestion.skinport  # STUB — fake listings, for exercising arbitrage logic only
-uv run python -m consolidator        # consumes raw.*.listings, writes to postgres
-uv run python -m analysis            # one-shot: trend, volatility, arbitrage, underpriced_listing
-uv run python -m analysis.scheduler  # runs the above on a loop (ANALYSIS_RECOMPUTE_INTERVAL_SECONDS)
-uv run uvicorn api.main:app --reload # http://localhost:8000 — /skins, /listings, /analysis, /freshness
-docker compose up -d dashboard       # http://localhost:3000 — Next.js dev server (Node via container, see below)
+git clone <repo-url> && cd cs2-market-analysis
+cp .env.example .env      # fill in CSFLOAT_API_KEY
+docker compose up -d --build
 ```
 
-`DB_PORT` defaults to `5433`, not the standard `5432`, to avoid colliding with any
+### Windows
+
+Use Docker Desktop with the WSL 2 backend, and clone the repo **inside WSL** (e.g.
+`~/code` in Ubuntu), not on `C:\`. On a Windows-drive checkout, file changes often
+don't reach the containers, so the dashboard won't hot-reload, and file access is much slower.
+
+```bash
+# in a WSL (Ubuntu) terminal
+git clone <repo-url> && cd cs2-market-analysis
+cp .env.example .env      # fill in CSFLOAT_API_KEY
+docker compose up -d --build
+```
+
+From then on every command in this README works unchanged in that WSL terminal. To
+edit the code, run `code .` from WSL, which opens VS Code connected to WSL.
+
+If you do run from PowerShell on a Windows-drive checkout instead, the Docker commands
+are the same; only the copy step differs: `Copy-Item .env.example .env`.
+
+### What's running
+
+That runs everything: Postgres (host port 5433), Redpanda (Kafka-API compatible, 9092),
+migrations (one-shot), the CSFloat ingester, the consolidator, the analysis scheduler,
+the API (<http://localhost:8000>) and the dashboard (<http://localhost:3000>).
+
+```bash
+docker compose logs -f consolidator     # follow one service
+docker compose up -d --build api        # rebuild after Python code changes
+docker compose stop ingestion-csfloat   # stop one service
+```
+
+All Python services share one image (`Dockerfile`). Inside the compose network they
+reach Postgres/Redpanda by service name; those overrides live in `docker-compose.yml`,
+so `.env` keeps the `localhost` values for running a script on the host instead —
+stop its container first, then e.g.:
+
+```bash
+uv run pytest                        # unit + integration tests (needs postgres up; each test rolls back)
+uv run python -m ingestion.skinport  # STUB — fake listings, for exercising arbitrage logic only
+uv run python -m analysis            # one-shot: trend, volatility, arbitrage, underpriced_listing
+uv run uvicorn api.main:app --reload
+```
+
+`DB_PORT` is `5433` in `.env.example`, not the standard `5432`, to avoid colliding with any
 pre-existing local Postgres install.
 
 ### Dashboard (no local Node needed)
 
-Node isn't required on the host — `docker-compose.yml`'s `dashboard` service runs
-`next dev` inside a `node:22-alpine` container with `dashboard/` mounted in. First time only:
+Node isn't required on the host — the `dashboard` service runs `next dev` inside a
+`node:22-alpine` container with `dashboard/` mounted in, installing its own Linux
+`node_modules` into a named volume. Its server-side fetches use `API_BASE_URL=http://api:8000`
+(set in `docker-compose.yml`); the browser uses `NEXT_PUBLIC_API_BASE_URL`, defaulting to
+`http://localhost:8000`.
+
+To add an npm package (works the same on macOS and Windows):
 
 ```bash
-cp dashboard/.env.example dashboard/.env.local
-```
-
-The FastAPI server needs to be reachable from *inside* that container too, so run it bound to
-all interfaces rather than just localhost: `uv run uvicorn api.main:app --host 0.0.0.0 --port 8000`.
-(`dashboard/.env.local`'s `API_BASE_URL=http://host.docker.internal:8000` is how the containerized
-Next.js server reaches it; `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` is what the browser —
-running on your actual machine — uses instead, since client-side code can't see `host.docker.internal`.)
-
-To scaffold/rebuild without the compose service (e.g. `npm install` a new package):
-
-```bash
-docker run --rm -v "<repo>/dashboard:/app" -w /app node:22-alpine sh -c "npm install <package>"
+docker compose exec dashboard npm install <package>
 ```
 
 ## Layout

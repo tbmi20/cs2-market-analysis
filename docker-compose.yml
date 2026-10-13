@@ -1,3 +1,21 @@
+# Shared by every Python service below: same image, same config. Inside the
+# compose network services reach each other by name, so these override the
+# localhost values in .env (which stay correct for running scripts on the host).
+x-python-service: &python-service
+  image: cs2-market-analysis-python  # built once by the migrate service
+  pull_policy: never
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+  restart: unless-stopped
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,12 +49,62 @@ services:
       - --overprovisioned
       - --node-id=0
       - --check=false
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr=PLAINTEXT://localhost:9092
+      # Two listeners: "internal" for containers on the compose network,
+      # "external" for scripts run on the host via localhost:9092.
+      - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:29092,external://localhost:9092
     ports:
       - "9092:9092"
     volumes:
       - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: applies migrations, prints the resulting revision, then exits
+  # (status "Exited (0)" is success). Everything else waits for it.
+  migrate:
+    <<: *python-service
+    build: .
+    command: sh -c "alembic upgrade head && alembic current"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *python-service
+    container_name: cs2-api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+
+  ingestion-csfloat:
+    <<: *python-service
+    container_name: cs2-ingestion-csfloat
+    command: python -m ingestion.csfloat
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+
+  consolidator:
+    <<: *python-service
+    container_name: cs2-consolidator
+    command: python -m consolidator
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+
+  analysis-scheduler:
+    <<: *python-service
+    container_name: cs2-analysis-scheduler
+    command: python -m analysis.scheduler
 
   # Node isn't installed on the host — this substitutes a container for local
   # Node tooling (plan Section 7/9 step 7). Dev-only: runs `next dev` straight
@@ -47,12 +115,24 @@ services:
     working_dir: /app
     volumes:
       - ./dashboard:/app
+      # Keep the container's node_modules and .next separate from the host's:
+      # the host copies contain macOS-native binaries (SWC, lightningcss,
+      # tailwind oxide) that won't load on Linux/musl.
+      - dashboard_node_modules:/app/node_modules
+      - dashboard_next:/app/.next
     ports:
       - "3000:3000"
-    command: sh -c "npm run dev"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Docker Desktop provides this natively; harmless to also set explicitly
+    command: sh -c "npm ci && npm run dev"
+    environment:
+      # Server-side fetches run inside this container, where localhost is the
+      # container itself — reach the api service by name. Browser-side calls
+      # (NEXT_PUBLIC_API_BASE_URL) keep the localhost:8000 default.
+      API_BASE_URL: http://api:8000
+    depends_on:
+      - api
 
 volumes:
   postgres_data:
   redpanda_data:
+  dashboard_node_modules:
+  dashboard_next:
