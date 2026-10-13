@@ -91,6 +91,16 @@ services:
       redpanda:
         condition: service_healthy
 
+  ingestion-skinport:
+    <<: *python-service
+    container_name: cs2-ingestion-skinport
+    command: python -m ingestion.skinport
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+
   consolidator:
     <<: *python-service
     container_name: cs2-consolidator

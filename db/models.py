@@ -61,6 +61,7 @@ class Listing(Base):
     rarity: Mapped[str | None]
     listing_price: Mapped[float | None]  # ask
     buy_order_price: Mapped[float | None]  # bid, if available
+    quantity: Mapped[int] = mapped_column(server_default="1")  # >1 only for aggregate listings (Skinport)
     raw_payload: Mapped[dict | None] = mapped_column(JSONB)  # untouched source response
     first_seen: Mapped[datetime] = mapped_column(server_default=func.now())
     last_updated: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
