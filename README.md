@@ -6,14 +6,41 @@ See [plan/cs2-market-analysis-plan.md](plan/cs2-market-analysis-plan.md) for the
 
 ## Local dev setup
 
+Everything runs in Docker, so the only requirements are Docker Desktop (Compose v2.24+)
+and a CSFloat API key. `uv` is only needed to run scripts or tests outside Docker.
+
+### macOS
+
 ```bash
+git clone <repo-url> && cd cs2-market-analysis
 cp .env.example .env      # fill in CSFLOAT_API_KEY
 docker compose up -d --build
 ```
 
+### Windows
+
+Use Docker Desktop with the WSL 2 backend, and clone the repo **inside WSL** (e.g.
+`~/code` in Ubuntu), not on `C:\`. On a Windows-drive checkout, file changes often
+don't reach the containers, so the dashboard won't hot-reload, and file access is much slower.
+
+```bash
+# in a WSL (Ubuntu) terminal
+git clone <repo-url> && cd cs2-market-analysis
+cp .env.example .env      # fill in CSFLOAT_API_KEY
+docker compose up -d --build
+```
+
+From then on every command in this README works unchanged in that WSL terminal. To
+edit the code, run `code .` from WSL, which opens VS Code connected to WSL.
+
+If you do run from PowerShell on a Windows-drive checkout instead, the Docker commands
+are the same; only the copy step differs: `Copy-Item .env.example .env`.
+
+### What's running
+
 That runs everything: Postgres (host port 5433), Redpanda (Kafka-API compatible, 9092),
 migrations (one-shot), the CSFloat ingester, the consolidator, the analysis scheduler,
-the API (http://localhost:8000) and the dashboard (http://localhost:3000).
+the API (<http://localhost:8000>) and the dashboard (<http://localhost:3000>).
 
 ```bash
 docker compose logs -f consolidator     # follow one service
@@ -44,10 +71,10 @@ Node isn't required on the host — the `dashboard` service runs `next dev` insi
 (set in `docker-compose.yml`); the browser uses `NEXT_PUBLIC_API_BASE_URL`, defaulting to
 `http://localhost:8000`.
 
-To scaffold/rebuild without the compose service (e.g. `npm install` a new package):
+To add an npm package (works the same on macOS and Windows):
 
 ```bash
-docker run --rm -v "<repo>/dashboard:/app" -w /app node:22-alpine sh -c "npm install <package>"
+docker compose exec dashboard npm install <package>
 ```
 
 ## Layout
