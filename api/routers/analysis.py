@@ -76,6 +76,7 @@ def list_analysis_results(
             continue
         results.append(
             AnalysisResultOut(
+                id=analysis_result.id,
                 skin_variant_id=analysis_result.skin_variant_id,
                 weapon=skin_variant.weapon,
                 skin_name=skin_variant.skin_name,

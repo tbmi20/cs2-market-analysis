@@ -63,11 +63,12 @@ services:
       timeout: 5s
       retries: 20
 
-  # One-shot: applies migrations, then exits. Everything else waits for it.
+  # One-shot: applies migrations, prints the resulting revision, then exits
+  # (status "Exited (0)" is success). Everything else waits for it.
   migrate:
     <<: *python-service
     build: .
-    command: alembic upgrade head
+    command: sh -c "alembic upgrade head && alembic current"
     restart: "no"
     depends_on:
       postgres:

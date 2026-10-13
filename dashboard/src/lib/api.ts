@@ -23,6 +23,7 @@ export type Listing = {
 };
 
 export type AnalysisResult = {
+  id: number;
   skin_variant_id: number;
   weapon: string;
   skin_name: string;

@@ -30,6 +30,7 @@ class ListingOut(BaseModel):
 
 
 class AnalysisResultOut(BaseModel):
+    id: int
     skin_variant_id: int
     weapon: str
     skin_name: str
