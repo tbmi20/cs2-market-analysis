@@ -4,6 +4,8 @@ using item shapes taken from a live GET /v1/items response (2026-10-13).
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from ingestion.skinport.models import SkinportItem
@@ -43,6 +45,7 @@ def plugin() -> SkinportPlugin:
     plugin = SkinportPlugin.__new__(SkinportPlugin)  # skip __init__, no HTTP client needed
     plugin._client = _StubClient()
     plugin._last_published = {}
+    plugin._reconfirm_after = timedelta(hours=6)
     return plugin
 
 
@@ -98,7 +101,7 @@ def test_fetch_listings_publishes_only_changes(plugin: SkinportPlugin) -> None:
     assert plugin.fetch_listings() == []  # nothing moved
 
 
-def test_fetch_listings_clears_price_of_sold_out_item(plugin: SkinportPlugin) -> None:
+def test_fetch_listings_delists_sold_out_item(plugin: SkinportPlugin) -> None:
     plugin._client.items = [item(), item(market_hash_name="AK-47 | Redline (Field-Tested)")]
     plugin.fetch_listings()
 
@@ -106,8 +109,20 @@ def test_fetch_listings_clears_price_of_sold_out_item(plugin: SkinportPlugin) ->
     [gone] = plugin.fetch_listings()
 
     assert gone.listing_id == "AK-47 | Redline (Field-Tested)"
-    assert gone.listing_price is None
+    assert gone.event_type == "delisted"
+    assert gone.listing_price == pytest.approx(409.66)  # last known ask, kept
     assert gone.quantity == 0
+    assert plugin.fetch_listings() == []  # published once, not every poll
+
+
+def test_fetch_listings_reconfirms_unchanged_items_periodically(plugin: SkinportPlugin) -> None:
+    plugin._client.items = [item()]
+    plugin.fetch_listings()
+    assert plugin.fetch_listings() == []
+
+    plugin._reconfirm_after = timedelta(0)
+    [reconfirmed] = plugin.fetch_listings()
+    assert reconfirmed.listing_id == "★ Karambit | Urban Masked (Field-Tested)"
 
 
 def test_fetch_listings_raises_on_empty_catalog(plugin: SkinportPlugin) -> None:

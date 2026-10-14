@@ -52,7 +52,7 @@ def run(session: Session | None = None, min_sample_count: int | None = None) -> 
                 func.sum(Listing.quantity).label("active_count"),
             )
             .join(SkinVariant, Listing.skin_variant_id == SkinVariant.id)
-            .where(Listing.listing_price.is_not(None))
+            .where(Listing.status == "active", Listing.listing_price.is_not(None))
             .group_by(SkinVariant.weapon, SkinVariant.skin_name, SkinVariant.wear_category, Listing.marketplace)
         ).all()
 

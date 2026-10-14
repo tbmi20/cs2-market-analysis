@@ -45,12 +45,18 @@ class SkinVariant(Base):
 
 
 class Listing(Base):
-    """Current state: one row per active listing, upserted."""
+    """Current state: one row per listing ever observed, upserted.
+
+    Only `status == 'active'` rows are on sale right now. A sold/delisted/
+    expired row is kept (with its last known price) rather than deleted, so
+    a late re-observation can't resurrect it as a brand-new listing.
+    """
 
     __tablename__ = "listings"
     __table_args__ = (
         UniqueConstraint("marketplace", "listing_id"),
         Index("ix_listings_variant_float", "skin_variant_id", "float_value"),
+        Index("ix_listings_status_last_updated", "status", "last_updated"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -63,8 +69,13 @@ class Listing(Base):
     buy_order_price: Mapped[float | None]  # bid, if available
     quantity: Mapped[int] = mapped_column(server_default="1")  # >1 only for aggregate listings (Skinport)
     raw_payload: Mapped[dict | None] = mapped_column(JSONB)  # untouched source response
+    # 'active' | 'sold' | 'delisted' | 'expired' — 'expired' means no
+    # marketplace observation confirmed it for LISTING_STALE_AFTER_HOURS (see
+    # consolidator/consumer.py), so it can't be trusted to still be on sale.
+    status: Mapped[str] = mapped_column(server_default="active")
+    removed_at: Mapped[datetime | None]  # when it left 'active'
     first_seen: Mapped[datetime] = mapped_column(server_default=func.now())
-    last_updated: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    last_updated: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())  # last observed
 
 
 class PriceHistory(Base):
@@ -77,7 +88,7 @@ class PriceHistory(Base):
     marketplace: Mapped[str]
     skin_variant_id: Mapped[int] = mapped_column(ForeignKey("skin_variants.id"))
     price: Mapped[float]
-    event_type: Mapped[str]  # 'listed' | 'sold' | 'buy_order'
+    event_type: Mapped[str]  # 'listed' | 'sold' | 'buy_order' — only written when the price is new or moved
     observed_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

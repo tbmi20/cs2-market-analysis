@@ -27,7 +27,8 @@ def main() -> None:
         raise SystemExit(1)
 
     interval = float(os.environ.get("CSFLOAT_POLL_INTERVAL_SECONDS", "60"))
-    plugin = CSFloatPlugin(api_key=api_key)
+    recheck_per_poll = int(os.environ.get("CSFLOAT_RECHECK_PER_POLL", "20"))
+    plugin = CSFloatPlugin(api_key=api_key, recheck_per_poll=recheck_per_poll)
     publisher = ListingPublisher(marketplace=plugin.marketplace)
     run_forever(plugin, publisher, interval_seconds=interval)
 

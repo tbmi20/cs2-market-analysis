@@ -11,7 +11,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 WearCategory = Literal["FN", "MW", "FT", "WW", "BS"]
-EventType = Literal["listed", "sold", "buy_order"]
+# What an observation says about the listing:
+# - "listed": it's on sale at listing_price (new, re-confirmed, or repriced —
+#   the consolidator works out which by comparing against the stored row)
+# - "sold": it sold, at listing_price
+# - "delisted": it's no longer on sale for a reason other than a known sale
+#   (seller pulled it, or an aggregate like Skinport's sold out/vanished)
+EventType = Literal["listed", "sold", "delisted"]
 
 # Standard CS2 wear-name -> wear-category mapping, shared across marketplaces
 # (this is a display-name convention, not the premium float_buckets config —

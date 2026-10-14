@@ -30,6 +30,7 @@ def list_skins(
             func.count(Listing.id).label("active_listing_count"),
         )
         .join(Listing, Listing.skin_variant_id == SkinVariant.id)
+        .where(Listing.status == "active")
         .group_by(SkinVariant.weapon, SkinVariant.skin_name, SkinVariant.wear_category)
     )
     if q:

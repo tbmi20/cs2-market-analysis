@@ -36,7 +36,7 @@ class CSFloatListing(BaseModel):
     created_at: str
     type: str  # 'buy_now' | 'auction'
     price: int  # cents
-    state: str  # 'listed' when active; other values exist but aren't documented
+    state: str  # 'listed' when active; seen live: 'sold', 'delisted' (others exist but aren't documented)
     item: CSFloatItem
     min_offer_price: int | None = None  # seller's floor for offers — not a real order-book bid,
     # but the closest thing CSFloat exposes; mapped to NormalizedListing.buy_order_price as an

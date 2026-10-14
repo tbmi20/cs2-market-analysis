@@ -43,7 +43,7 @@ def list_listings(
             Listing.last_updated,
         )
         .join(SkinVariant, SkinVariant.id == Listing.skin_variant_id)
-        .where(SkinVariant.weapon == weapon, SkinVariant.skin_name == skin_name)
+        .where(SkinVariant.weapon == weapon, SkinVariant.skin_name == skin_name, Listing.status == "active")
     )
     if wear_category:
         query = query.where(SkinVariant.wear_category == wear_category)

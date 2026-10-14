@@ -27,7 +27,9 @@ def make_variant(db_session, **overrides) -> int:
     return variant.id
 
 
-def add_listing(db_session, *, marketplace: str, listing_id: str, variant_id: int, price: float, quantity: int = 1) -> None:
+def add_listing(
+    db_session, *, marketplace: str, listing_id: str, variant_id: int, price: float, quantity: int = 1, status: str = "active"
+) -> None:
     db_session.add(
         Listing(
             marketplace=marketplace,
@@ -35,6 +37,7 @@ def add_listing(db_session, *, marketplace: str, listing_id: str, variant_id: in
             skin_variant_id=variant_id,
             listing_price=price,
             quantity=quantity,
+            status=status,
         )
     )
     db_session.flush()
@@ -156,3 +159,15 @@ def test_sample_count_uses_skinport_quantity(db_session) -> None:
     assert result.sample_count == 12
     assert result.details["cheap_active_listings"] == 15
     assert result.confidence_tier != "low"
+
+
+def test_ignores_listings_no_longer_on_sale(db_session) -> None:
+    variant_id = make_variant(db_session, skin_name="Slate (arbitrage-test-sold)")
+    set_fee(db_session, "csfloat", 0.0)
+    set_fee(db_session, "skinport", 0.0)
+    add_listing(db_session, marketplace="csfloat", listing_id="cf-sold", variant_id=variant_id, price=54.45)
+    add_listing(db_session, marketplace="skinport", listing_id="sp-sold", variant_id=variant_id, price=40.00, status="delisted")
+
+    run(session=db_session, min_sample_count=10)
+
+    assert results_for(db_session, variant_id) == []

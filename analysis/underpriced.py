@@ -54,7 +54,7 @@ def run(session: Session | None = None, min_sample_count: int | None = None) -> 
 
         active_listings = session.execute(
             select(Listing.id, Listing.marketplace, Listing.listing_id, Listing.skin_variant_id, Listing.listing_price).where(
-                Listing.listing_price.is_not(None)
+                Listing.status == "active", Listing.listing_price.is_not(None)
             )
         ).all()
 
