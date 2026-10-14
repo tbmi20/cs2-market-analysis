@@ -7,6 +7,12 @@ rather than showing a misleading number) happens here, not in the analysis
 modules — they always write a row with its real sample_count and confidence
 tier; this is where "suppressed" gets computed and attached, so the frontend
 can render "not enough data" using the real sample size rather than nothing.
+
+Point-in-time metrics (arbitrage, underpriced_listing) are further limited to
+the newest run as a whole: a variant missing from it no longer has that
+signal — e.g. the underpriced listing sold — and its older row must not
+linger as if current. One run's rows share a computed_at, since each module
+writes them in a single transaction and the column defaults to now().
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from db.models import AnalysisResult, SkinVariant
 router = APIRouter()
 
 MetricType = Literal["trend", "volatility", "arbitrage", "underpriced_listing"]
+POINT_IN_TIME_METRICS = ("arbitrage", "underpriced_listing")
 
 
 def _signal_min_sample_count() -> int:
@@ -67,6 +74,11 @@ def list_analysis_results(
         .order_by(AnalysisResult.value.desc().nullslast())
         .limit(limit)
     )
+    if metric_type in POINT_IN_TIME_METRICS:
+        latest_run = (
+            select(func.max(AnalysisResult.computed_at)).where(AnalysisResult.metric_type == metric_type).scalar_subquery()
+        )
+        query = query.where(AnalysisResult.computed_at == latest_run)
 
     min_sample_count = _signal_min_sample_count()
     results = []

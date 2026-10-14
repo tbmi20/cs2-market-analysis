@@ -82,7 +82,56 @@ docker compose exec dashboard npm install <package>
 - `db/` — SQLAlchemy models (source of truth for the schema) + session factory, shared by everything below
 - `migrations/` — Alembic migrations, generated from `db/models.py`
 - `ingestion/` — per-marketplace polling plugins (`ingestion/common` holds the shared plugin interface). `ingestion/skinport` publishes Skinport's per-item lowest ask + stock count (its API has no individual listings or floats), skipping StatTrak™/Souvenir
-- `consolidator/` — single Kafka consumer: dedups, upserts `listings`/`skin_variants`, appends `price_history`
+- `consolidator/` — single Kafka consumer: dedups, upserts `listings`/`skin_variants`, appends `price_history`, expires listings nobody has re-observed
 - `analysis/` — scheduled batch modules (`trend.py`, `arbitrage.py`, `underpriced.py`) — read Postgres only, no Kafka dependency
 - `api/` — FastAPI service serving `analysis_results` and listing browse/filter queries
 - `dashboard/` — Next.js frontend
+
+## Keeping listings current
+
+Listings change after we first see them: prices move, items sell, sellers pull them.
+Each `listings` row has a `status` (`active`, `sold`, `delisted` or `expired`) and a
+`removed_at` time. Analysis and the API only use `active` rows. Removed rows are kept
+with their last known price rather than deleted.
+
+**How changes are detected**
+
+- **CSFloat**: the `most_recent` feed only shows a listing while it's new, so the
+  ingester tracks every listing it has seen. Each poll it also rechecks the
+  `CSFLOAT_RECHECK_PER_POLL` (default 20) listings that were checked longest ago, via
+  `GET /v1/listings/{id}`. That endpoint returns `state` as `listed`, `sold` or
+  `delisted`, and the current price. Rechecks pause when the by-id rate limit runs low.
+- **Skinport**: each poll returns the full catalog of per-item lowest asks. The ingester
+  sends items whose price or stock changed, items that disappeared (as `delisted`), and
+  every unchanged item once every `SKINPORT_RECONFIRM_HOURS` (default 6). Skinport
+  doesn't say whether units sold or were pulled, so it never reports `sold`.
+
+**What the consolidator does with an observation**
+
+| Observation | `listings` row | `price_history` |
+| --- | --- | --- |
+| New listing, or relisted after sold/delisted | `active` | `listed` point |
+| Seen again, price changed | `active`, new price | `listed` point |
+| Seen again, same price | `last_updated` refreshed | nothing |
+| Sold | `sold`, keeps price | `sold` point (once) |
+| Delisted | `delisted`, keeps price | nothing |
+
+Only writing a price point when something changed stops long-lived listings (and
+ingester restarts) from flooding the trend and underpriced baselines with duplicates.
+
+**Expiry backstop**: ingesters track listings in memory, so a restart forgets them.
+Every 10 minutes the consolidator marks `active` listings that haven't been observed for
+`LISTING_STALE_AFTER_HOURS` (default 48) as `expired`. If an expired listing is seen
+again, it goes back to `active` without a new price point.
+
+**Analysis results**: arbitrage and underpriced results describe the market right now,
+so `/analysis` only returns those from the newest run. A listing that sold since an
+earlier run no longer shows up as a signal.
+
+**Known limits**
+
+- CSFloat's by-id endpoint allows about 50k requests a day, fewer than the number of
+  new listings, so many CSFloat listings leave `active` by expiring rather than being
+  caught as sold or delisted.
+- The CSFloat feed has its own limit of 200 requests per window. Polling 5 pages a
+  minute runs past it, so the ingester periodically pauses until the window resets.

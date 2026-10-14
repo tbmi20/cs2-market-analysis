@@ -41,12 +41,13 @@ def add_history(db_session, *, marketplace: str, variant_id: int, price: float, 
     db_session.flush()
 
 
-def add_listing(db_session, *, marketplace: str, listing_id: str, variant_id: int, price: float) -> int:
+def add_listing(db_session, *, marketplace: str, listing_id: str, variant_id: int, price: float, status: str = "active") -> int:
     listing = Listing(
         marketplace=marketplace,
         listing_id=listing_id,
         skin_variant_id=variant_id,
         listing_price=price,
+        status=status,
     )
     db_session.add(listing)
     db_session.flush()
@@ -94,6 +95,16 @@ def test_does_not_compare_across_marketplaces(db_session) -> None:
     variant_id = make_variant(db_session, skin_name="Asiimov (cross-market)")
     add_history(db_session, marketplace="skinport", variant_id=variant_id, price=200.0, count=9)
     add_listing(db_session, marketplace="csfloat", listing_id="cf-only", variant_id=variant_id, price=100.0)
+
+    run(session=db_session, min_sample_count=10)
+
+    assert results_for(db_session, variant_id) == []
+
+
+def test_does_not_flag_a_listing_no_longer_on_sale(db_session) -> None:
+    variant_id = make_variant(db_session, skin_name="Asiimov (sold-cheap)")
+    add_history(db_session, marketplace="csfloat", variant_id=variant_id, price=100.0, count=9)
+    add_listing(db_session, marketplace="csfloat", listing_id="sold-cheap", variant_id=variant_id, price=60.0, status="sold")
 
     run(session=db_session, min_sample_count=10)
 

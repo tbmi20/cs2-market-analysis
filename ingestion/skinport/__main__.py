@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import timedelta
 
 from dotenv import load_dotenv
 
@@ -29,7 +30,8 @@ def main() -> None:
 
     # Skinport caches /v1/items for 5 minutes, so polling faster just re-reads the cache.
     interval = float(os.environ.get("SKINPORT_POLL_INTERVAL_SECONDS", "300"))
-    plugin = SkinportPlugin(client_id=client_id, client_secret=client_secret)
+    reconfirm_after = timedelta(hours=float(os.environ.get("SKINPORT_RECONFIRM_HOURS", "6")))
+    plugin = SkinportPlugin(client_id=client_id, client_secret=client_secret, reconfirm_after=reconfirm_after)
     publisher = ListingPublisher(marketplace=plugin.marketplace)
     run_forever(plugin, publisher, interval_seconds=interval)
 

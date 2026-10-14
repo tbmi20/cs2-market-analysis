@@ -11,11 +11,11 @@ marketplace filter, since the real dev database has genuine csfloat data
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from consolidator.consumer import process_batch, upsert_listing
+from consolidator.consumer import expire_stale_listings, process_batch, upsert_listing
 from consolidator.float_buckets import resolve_float_bucket
 from consolidator.skin_variants import get_or_create_skin_variant
 from db.models import IngestionRun, Listing, PriceHistory, SkinVariant
@@ -107,3 +107,93 @@ def test_process_batch_logs_ingestion_run(db_session) -> None:
     ).scalar_one()
     assert latest.status == "success"
     assert latest.records_ingested == 1
+
+
+def get_listing(db_session, listing_id: str) -> Listing:
+    return db_session.execute(
+        select(Listing).where(Listing.marketplace == "csfloat", Listing.listing_id == listing_id)
+    ).scalar_one()
+
+
+def history_for(db_session, listing: Listing) -> list[tuple[str, float]]:
+    rows = db_session.execute(
+        select(PriceHistory).where(PriceHistory.skin_variant_id == listing.skin_variant_id).order_by(PriceHistory.id)
+    ).scalars()
+    return [(row.event_type, row.price) for row in rows]
+
+
+def test_reobserving_unchanged_listing_adds_no_price_history(db_session) -> None:
+    first_seen = datetime.now(timezone.utc) - timedelta(minutes=5)
+    upsert_listing(db_session, make_listing(listing_id="test-reobserve", observed_at=first_seen))
+    upsert_listing(db_session, make_listing(listing_id="test-reobserve"))
+
+    listing = get_listing(db_session, "test-reobserve")
+    assert history_for(db_session, listing) == [("listed", 50.0)]
+    assert listing.last_updated > first_seen.replace(tzinfo=None)  # still refreshed
+
+
+def test_sold_listing_records_sale_once_and_leaves_active(db_session) -> None:
+    upsert_listing(db_session, make_listing(listing_id="test-sold"))
+    upsert_listing(db_session, make_listing(listing_id="test-sold", event_type="sold", listing_price=48.0))
+    upsert_listing(db_session, make_listing(listing_id="test-sold", event_type="sold", listing_price=48.0))  # redelivered
+
+    listing = get_listing(db_session, "test-sold")
+    assert listing.status == "sold"
+    assert listing.removed_at is not None
+    assert history_for(db_session, listing) == [("listed", 50.0), ("sold", 48.0)]
+
+
+def test_delisted_listing_keeps_last_price_without_history(db_session) -> None:
+    upsert_listing(db_session, make_listing(listing_id="test-delisted"))
+    upsert_listing(db_session, make_listing(listing_id="test-delisted", event_type="delisted", listing_price=None))
+
+    listing = get_listing(db_session, "test-delisted")
+    assert listing.status == "delisted"
+    assert listing.listing_price == 50.0
+    assert history_for(db_session, listing) == [("listed", 50.0)]
+
+
+def test_delisted_listing_never_seen_is_ignored(db_session) -> None:
+    upsert_listing(db_session, make_listing(listing_id="test-never-seen", event_type="delisted"))
+
+    assert db_session.execute(select(Listing).where(Listing.listing_id == "test-never-seen")).first() is None
+
+
+def test_relisted_listing_is_active_with_a_new_price_point(db_session) -> None:
+    upsert_listing(db_session, make_listing(listing_id="test-relisted"))
+    upsert_listing(db_session, make_listing(listing_id="test-relisted", event_type="delisted"))
+    upsert_listing(db_session, make_listing(listing_id="test-relisted"))
+
+    listing = get_listing(db_session, "test-relisted")
+    assert listing.status == "active"
+    assert listing.removed_at is None
+    assert history_for(db_session, listing) == [("listed", 50.0), ("listed", 50.0)]
+
+
+def test_expire_stale_listings_only_expires_unobserved_active_rows(db_session) -> None:
+    long_ago = datetime.now(timezone.utc) - timedelta(hours=72)
+    upsert_listing(db_session, make_listing(listing_id="test-stale", observed_at=long_ago))
+    upsert_listing(db_session, make_listing(listing_id="test-fresh"))
+    upsert_listing(db_session, make_listing(listing_id="test-stale-sold", observed_at=long_ago))
+    upsert_listing(db_session, make_listing(listing_id="test-stale-sold", event_type="sold", observed_at=long_ago))
+
+    assert expire_stale_listings(db_session, timedelta(hours=48)) >= 1
+    db_session.expire_all()
+
+    stale = get_listing(db_session, "test-stale")
+    assert stale.status == "expired"
+    assert stale.last_updated == long_ago.replace(tzinfo=None)  # still "last observed", not bumped
+    assert get_listing(db_session, "test-fresh").status == "active"
+    assert get_listing(db_session, "test-stale-sold").status == "sold"
+
+
+def test_expired_listing_reobserved_is_active_without_new_price_point(db_session) -> None:
+    long_ago = datetime.now(timezone.utc) - timedelta(hours=72)
+    upsert_listing(db_session, make_listing(listing_id="test-expired-back", observed_at=long_ago))
+    expire_stale_listings(db_session, timedelta(hours=48))
+    upsert_listing(db_session, make_listing(listing_id="test-expired-back"))
+
+    db_session.expire_all()
+    listing = get_listing(db_session, "test-expired-back")
+    assert listing.status == "active"
+    assert history_for(db_session, listing) == [("listed", 50.0)]

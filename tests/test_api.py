@@ -52,6 +52,21 @@ def test_list_skins_returns_only_variants_with_active_listings(client, db_sessio
     assert body[0]["active_listing_count"] == 1
 
 
+def test_skins_and_listings_exclude_inactive_listings(client, db_session) -> None:
+    variant_id = make_variant(db_session, skin_name="Blaze (api-test-inactive)")
+    db_session.add(Listing(marketplace="csfloat", listing_id="api-active", skin_variant_id=variant_id, listing_price=100.0))
+    for status in ("sold", "delisted", "expired"):
+        db_session.add(
+            Listing(marketplace="csfloat", listing_id=f"api-{status}", skin_variant_id=variant_id, listing_price=90.0, status=status)
+        )
+    db_session.flush()
+
+    [skin] = client.get("/skins", params={"q": "Blaze (api-test-inactive)"}).json()
+    assert skin["active_listing_count"] == 1
+    body = client.get("/listings", params={"weapon": "Desert Eagle", "skin_name": "Blaze (api-test-inactive)"}).json()
+    assert [row["listing_id"] for row in body] == ["api-active"]
+
+
 def test_list_listings_filters_by_float_range(client, db_session) -> None:
     variant_id = make_variant(db_session, skin_name="Blaze (api-test-float)")
     db_session.add(
@@ -135,6 +150,8 @@ def test_analysis_handles_null_window_days_metric(client, db_session) -> None:
             value=5.0,
             sample_count=1,
             confidence_tier="low",
+            # Ahead of any real scheduler run, so it's the newest arbitrage run.
+            computed_at=datetime.now(timezone.utc) + timedelta(minutes=1),
             details={"cheap_marketplace": "skinport"},
         )
     )
@@ -144,6 +161,32 @@ def test_analysis_handles_null_window_days_metric(client, db_session) -> None:
     body = resp.json()
     assert len(body) == 1
     assert body[0]["details"]["cheap_marketplace"] == "skinport"
+
+
+def test_point_in_time_metric_drops_variants_missing_from_latest_run(client, db_session) -> None:
+    # An underpriced listing flagged last run but not this one (e.g. it sold)
+    # must not keep showing just because it's still its variant's newest row.
+    gone_variant = make_variant(db_session, skin_name="Blaze (api-test-run-gone)")
+    kept_variant = make_variant(db_session, skin_name="Blaze (api-test-run-kept)")
+    previous_run = datetime.now(timezone.utc) + timedelta(minutes=1)
+    latest_run = previous_run + timedelta(minutes=5)
+    for variant_id, computed_at in [(gone_variant, previous_run), (kept_variant, previous_run), (kept_variant, latest_run)]:
+        db_session.add(
+            AnalysisResult(
+                skin_variant_id=variant_id,
+                metric_type="underpriced_listing",
+                window_days=7,
+                value=0.3,
+                sample_count=20,
+                confidence_tier="high",
+                computed_at=computed_at,
+            )
+        )
+    db_session.flush()
+
+    assert client.get("/analysis", params={"metric_type": "underpriced_listing", "skin_variant_id": gone_variant}).json() == []
+    [kept] = client.get("/analysis", params={"metric_type": "underpriced_listing", "skin_variant_id": kept_variant}).json()
+    assert kept["skin_variant_id"] == kept_variant
 
 
 def test_freshness_returns_latest_run_per_marketplace(client, db_session) -> None:
